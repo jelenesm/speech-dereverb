@@ -8,13 +8,9 @@ waveform --STFT--> log-polar --U-Net on log-magnitude--> recombine w/ phase --IS
 
 ## Example
 
-Reverberant input (top) and the dereverbed output of the trained U-Net (bottom).
-
-**Input**
+Reverberant input (top) and the dereverbed output of the trained U-Net (bottom). Click unmute and play to liste.
 
 https://github.com/user-attachments/assets/8689200e-472d-4bfe-a05c-151f18ae4cc2
-
-**Output**
 
 https://github.com/user-attachments/assets/31db8d29-60c8-45e4-bb69-eafa7a5b785c
 
