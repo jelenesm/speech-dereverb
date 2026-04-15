@@ -3,12 +3,12 @@
 U-Net speech dereverberation in Keras / TensorFlow. A 7-down/7-up convolutional U-Net operates on the log-magnitude STFT of 16 kHz speech to remove room reverb (and optionally clipping and additive noise). The STFT / ISTFT are custom Keras layers, so the model maps raw audio to raw audio end-to-end.
 
 ```
-waveform --STFT--> log-polar --U-Net on log-magnitude--> recombine w/ phase --ISTFT--> waveform
+waveform -> STFT -> log-polar -> U-Net on log-magnitude -> recombine w/ phase -> ISTFT -> waveform
 ```
 
 ## Example
 
-Reverberant input (top) and the dereverbed output of the trained U-Net (bottom). Click unmute and play to liste.
+Reverberant input (top) and the dereverbed output of the trained U-Net (bottom). Click unmute and play to listen.
 
 https://github.com/user-attachments/assets/8689200e-472d-4bfe-a05c-151f18ae4cc2
 
