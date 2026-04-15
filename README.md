@@ -14,13 +14,13 @@ Reverberant input (top) and the dereverbed output of the trained U-Net (bottom).
 
 ![input spectrogram](input.png)
 
-<!-- https://github.com/user-attachments/assets/27685238-7088-46e4-a1cb-84be51a38718 -->
+https://github.com/user-attachments/assets/27685238-7088-46e4-a1cb-84be51a38718
 
 **Output** — download: [output.wav](https://github.com/user-attachments/files/26752605/output.wav)
 
 ![output spectrogram](output.png)
 
-<!-- https://github.com/user-attachments/assets/e13d0ee2-1cda-4834-bc7e-a07f5a2a9298 -->
+https://github.com/user-attachments/assets/e13d0ee2-1cda-4834-bc7e-a07f5a2a9298
 
 ## Install
 
