@@ -10,13 +10,14 @@ waveform --STFT--> log-polar --U-Net on log-magnitude--> recombine w/ phase --IS
 
 Reverberant input (top) and the dereverbed output of the trained U-Net (bottom).
 
-**Input** ([input.wav](input.wav))
+**Input** [input.wav](https://github.com/user-attachments/files/26752572/input.wav)
+
 
 ![input spectrogram](input.png)
 
 <!-- INPUT_AUDIO_URL -->
 
-**Output** ([output.wav](output.wav))
+**Output** [output.wav](https://github.com/user-attachments/files/26752605/output.wav)
 
 ![output spectrogram](output.png)
 
