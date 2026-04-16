@@ -18,8 +18,6 @@ import numpy as np
 import soundfile as sf
 import matplotlib.pyplot as plt
 from matplotlib.widgets import Button
-from PIL import Image
-from scipy.signal import stft
 
 
 def _is_wsl():
@@ -71,29 +69,21 @@ class Player:
 
 
 def spectrogram_db(x, frame_length=512, frame_step=128, sr=16000):
-    _, _, Z = stft(x, fs=sr, nperseg=frame_length,
-                   noverlap=frame_length - frame_step, boundary=None)
-    return 20 * np.log10(np.abs(Z) + 1e-6)
-
-
-def _png_title(path):
-    """Read the 'Title' tEXt chunk from a PNG, if present."""
-    try:
-        with Image.open(path) as img:
-            return img.text.get('Title', '')
-    except (OSError, AttributeError):
-        return ''
+    # Matches train.py's STFT layer: right-pad, periodic Hann, drop DC bin.
+    pad = frame_length - frame_step
+    xp = np.concatenate([x, np.zeros(pad)])
+    n = np.arange(frame_length)
+    win = 0.5 - 0.5 * np.cos(2 * np.pi * n / frame_length)
+    n_frames = 1 + (len(xp) - frame_length) // frame_step
+    frames = np.stack([xp[i * frame_step:i * frame_step + frame_length] * win
+                       for i in range(n_frames)])
+    Z = np.fft.rfft(frames, n=frame_length, axis=-1)[:, 1:]
+    return (20 * np.log10(np.abs(Z) + 1e-6)).T
 
 
 def _batch_index(example_dir):
-    """Parse the 'batch N' index from input.png's embedded title.
-
-    Falls back to the trailing integer of the directory name."""
-    title = _png_title(os.path.join(example_dir, 'input.png'))
-    m = re.search(r'batch\s+(\d+)', title)
-    if m:
-        return int(m.group(1))
-    m = re.search(r'(\d+)$', os.path.basename(example_dir))
+    """Parse the batch id from directory names of the form `example_b{N}_{k}`."""
+    m = re.search(r'b(\d+)_\d+$', os.path.basename(example_dir))
     return int(m.group(1)) if m else -1
 
 
@@ -217,14 +207,14 @@ class Viewer:
             self.target_spec = self.target_spec[:, :nt]
 
         nfreq, nframes = self.input_spec.shape
-        vmin, vmax = -80, 20
+        vmin, vmax = -40, 40
         extent = [0, nframes, 0, nfreq]
 
         self.ax.clear()
         self.ax.set_xlabel('time frame')
         self.ax.set_ylabel('freq bin')
 
-        self.im = self.ax.imshow(self._current_spec(), vmin=vmin, vmax=vmax, cmap='magma',
+        self.im = self.ax.imshow(self._current_spec(), vmin=vmin, vmax=vmax,
                                  origin='lower', aspect='auto', extent=extent)
         if self.cbar is None:
             self.cbar = self.fig.colorbar(self.im, cax=self.cax, label='dB')

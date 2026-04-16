@@ -1,4 +1,4 @@
-"""Render example inputs/predictions (spectrograms + wavs) from a trained model."""
+"""Render example inputs/predictions (wavs only) from a trained model."""
 import argparse
 import os
 import time
@@ -6,19 +6,8 @@ import time
 import numpy as np
 import soundfile as sf
 import tensorflow as tf
-from matplotlib import pyplot as plt
 
-from train import FRAME_LENGTH, FRAME_STEP, STFT, checkpoint_path, dataset, dereverb_model
-
-
-def plot_spectrogram(x, title, frame_length, frame_step, vmin=-40, vmax=40):
-    X = STFT(frame_length, frame_step)(x[tf.newaxis, :])
-    X = 10 * np.log10(np.sum(np.square(X[0]+1e-5), axis=-1))
-    im = plt.imshow(np.transpose(X), vmin=vmin, vmax=vmax, origin='lower', aspect='auto')
-    plt.xlabel('time index')
-    plt.ylabel('freq index')
-    plt.title(title)
-    plt.colorbar(im, label='dB')
+from train import FRAME_LENGTH, FRAME_STEP, checkpoint_path, dataset, dereverb_model
 
 
 def make_overlapping_sequences(x, block_size, overlap):
@@ -62,33 +51,33 @@ def block_inference(model, x, block_size, overlap):
     return y
 
 
-def test_models(model_dict, dataset, num_examples, frame_length, frame_step, out_dir):
-    """Generate spectrogram pngs + wavs for a random test batch across models."""
-    def save(x, path, title):
-        plt.figure(figsize=(21, 7))
-        plot_spectrogram(x, title, frame_length, frame_step)
-        plt.tight_layout()
-        plt.savefig(path + '.png', metadata={'Title': title}, bbox_inches='tight')
-        plt.close()
+def test_models(model_dict, dataset, num_examples, frame_length, frame_step, out_dir,
+                batch_idx=None):
+    """Write input/target/prediction wavs for a test batch across models.
+
+    If `batch_idx` is None, a random batch is picked."""
+    def save(x, path):
         sf.write(path + '.wav', x, samplerate=16000)
 
     os.makedirs(out_dir, exist_ok=True)
-    batch_idx = np.random.randint(0, len(dataset))
+    if batch_idx is None:
+        batch_idx = np.random.randint(0, len(dataset))
     print(f'batch index: {batch_idx}')
     inputs, targets = dataset[batch_idx]
 
+    example_dirs = []
     for k in range(num_examples):
-        d = os.path.join(out_dir, f'example_{k}')
+        d = os.path.join(out_dir, f'example_b{batch_idx}_{k}')
         os.makedirs(d, exist_ok=True)
-        save(inputs[k], os.path.join(d, 'input'), f'input (batch {batch_idx})')
-        save(targets[k], os.path.join(d, 'target'), f'target (batch {batch_idx})')
+        example_dirs.append(d)
+        save(inputs[k], os.path.join(d, 'input'))
+        save(targets[k], os.path.join(d, 'target'))
 
     for model_name, (model, checkpoint) in model_dict.items():
         model.load_weights(checkpoint)
         preds = [block_inference(model, inp, block_size=16384, overlap=128) for inp in inputs]
-        for k in range(num_examples):
-            d = os.path.join(out_dir, f'example_{k}')
-            save(preds[k], os.path.join(d, model_name), f'{model_name} (batch {batch_idx})')
+        for k, d in enumerate(example_dirs):
+            save(preds[k], os.path.join(d, model_name))
 
 
 if __name__ == '__main__':
@@ -96,6 +85,8 @@ if __name__ == '__main__':
     p.add_argument('--ver', choices=['dev', 'prd'], default='prd')
     p.add_argument('--num-examples', type=int, default=8)
     p.add_argument('--batch-size', type=int, default=16)
+    p.add_argument('--batch-idx', type=int, default=None,
+                   help='Test batch index to render. Default: random.')
     p.add_argument('--out-dir', default='./demo_dereverb')
     p.add_argument('--seed', type=int, default=42)
     args = p.parse_args()
@@ -109,4 +100,5 @@ if __name__ == '__main__':
     ckpt = checkpoint_path(args.ver)
     model_dict = {'unet': (model, ckpt)}
 
-    test_models(model_dict, test_ds, args.num_examples, FRAME_LENGTH, FRAME_STEP, args.out_dir)
+    test_models(model_dict, test_ds, args.num_examples, FRAME_LENGTH, FRAME_STEP, args.out_dir,
+                batch_idx=args.batch_idx)
