@@ -14,6 +14,17 @@ https://github.com/user-attachments/assets/8689200e-472d-4bfe-a05c-151f18ae4cc2
 
 https://github.com/user-attachments/assets/31db8d29-60c8-45e4-bb69-eafa7a5b785c
 
+## Results
+
+Evaluated on `test-prd` (LibriSpeech `train-clean-100`). Baseline input: PESQ 2.562, STOI 0.838, SI-SNR -24.48 dB.
+
+| Loss | SI-SNR Gain | PESQ | PESQ Gain | STOI | STOI Gain |
+|---|---|---|---|---|---|
+| L1 | +1.69 dB | 2.602 | +0.040 | 0.923 | +0.085 |
+| L2 | **+1.72 dB** | 2.597 | +0.035 | 0.920 | +0.082 |
+| Multi-scale | +1.60 dB | **2.670** | **+0.108** | 0.918 | +0.080 |
+| SSIM | +1.61 dB | 2.620 | +0.058 | **0.924** | **+0.086** |
+
 ## Install
 
 Dependencies are pinned in [pyproject.toml](pyproject.toml) and [uv.lock](uv.lock). Create the environment with [uv](https://github.com/astral-sh/uv):
@@ -32,29 +43,31 @@ The three scripts form a linear pipeline. `--ver prd` uses the full `train-clean
    ```sh
    python prepare.py --ver prd
    ```
-2. **Train** — fits the U-Net with `log_l2_loss` (MSE on log-magnitude STFTs). Writes the best checkpoint to `./checkpoints/dereverb-unet-{ver}.weights.h5`. Training uses `ReduceLROnPlateau` and `EarlyStopping`; pass `--resume` to continue from an existing checkpoint.
+2. **Train** — fits the U-Net and writes the best checkpoint to `./checkpoints/dereverb-unet-{loss}-{ver}.weights.h5`. Select a loss with `--loss {l1,l2,multi_scale,ssim}` (default `l1`). Training uses `ReduceLROnPlateau` and `EarlyStopping`; pass `--resume` to continue from an existing checkpoint.
    ```sh
-   python train.py --ver prd
+   python train.py --ver prd --loss l1
    ```
-3. **Render examples** — picks a random test batch and writes input / target / prediction spectrograms and wavs under `./demo_dereverb/example_*/`:
+3. **Render examples** — picks a random test batch and writes input / target / prediction wavs under `./demo_dereverb/example_*/`:
    ```sh
-   python test.py --ver prd
+   python test.py --ver prd --loss l1
    ```
 
-After training, two extra tools are available:
+After training, three extra tools are available:
 
-- **`python eval.py --ver prd --split test`** — reports mean loss and SI-SNR (input, output, gain) over a split.
+- **`python eval.py --ver prd --loss l1 --split test`** — reports SI-SNR, PESQ, and STOI (input, output, gain) over a split.
 - **`python listen.py`** — interactive matplotlib viewer over `./demo_dereverb/`: toggles between input / output / target spectrograms and plays the wavs. On WSL, playback goes through `powershell.exe`'s `Media.SoundPlayer` so no Linux audio stack is needed.
+- **`python compare_models.py --ver prd`** — side-by-side comparison of all checkpoints in `./checkpoints/`. Pre-computes predictions for a test batch, then lets you browse examples and cycle through checkpoints with inline spectrogram display and audio playback.
 
 ## Repository layout
 
 | File | Role |
 | --- | --- |
-| [train.py](train.py) | Custom STFT / ISTFT layers, U-Net builder, `log_l2_loss`, `PyDataset`, training loop |
+| [train.py](train.py) | Custom STFT / ISTFT layers, U-Net builder, loss functions (L1, L2, multi-scale, SSIM), `PyDataset`, training loop |
 | [prepare.py](prepare.py) | Downloads, resampling, and offline reverb / clipping / noise degradation |
-| [test.py](test.py) | Overlap-add block inference and demo rendering |
-| [eval.py](eval.py) | Loss and SI-SNR metrics on a split |
+| [test.py](test.py) | Overlap-add block inference and demo wav rendering |
+| [eval.py](eval.py) | SI-SNR, PESQ, and STOI metrics on a split |
 | [listen.py](listen.py) | Interactive viewer for rendered examples |
+| [compare_models.py](compare_models.py) | Side-by-side checkpoint comparison with spectrogram display and audio playback |
 | [analyze.ipynb](analyze.ipynb) | Ad-hoc exploration notebook |
 
 Sample rate is hard-coded to **16 kHz** throughout. The STFT layer drops the DC bin so the frequency dimension is a power of two (required by the 7-level U-Net). See [CLAUDE.md](CLAUDE.md) for architectural details and gotchas.

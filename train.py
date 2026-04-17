@@ -140,6 +140,54 @@ def log_l2_loss(frame_length, frame_step):
         return keras.ops.mean(keras.ops.square(a - b))
     return apply
 
+def log_l1_loss(frame_length, frame_step):
+    stft = STFT(frame_length, frame_step)
+    to_logmag = cartesian_to_logpolar()
+
+    def apply(y_true, y_pred):
+        a, _ = to_logmag(stft(y_true))
+        b, _ = to_logmag(stft(y_pred))
+        return keras.ops.mean(keras.ops.abs(a - b))
+    return apply
+
+
+MULTI_SCALE_STFT_CONFIGS = [
+    (2048, 512),
+    (1024, 256),
+    (512, 128),
+    (256, 64),
+]
+
+def multi_scale_spectral_loss(configs=MULTI_SCALE_STFT_CONFIGS):
+    scales = [(STFT(fl, fs), cartesian_to_logpolar()) for fl, fs in configs]
+
+    def apply(y_true, y_pred):
+        loss = 0.0
+        for stft, to_logmag in scales:
+            a, _ = to_logmag(stft(y_true))
+            b, _ = to_logmag(stft(y_pred))
+            loss += keras.ops.mean(keras.ops.abs(a - b))
+        return loss / len(scales)
+    return apply
+
+
+def ssim_loss(frame_length, frame_step, max_val=20.0):
+    stft = STFT(frame_length, frame_step)
+    to_logmag = cartesian_to_logpolar()
+
+    def apply(y_true, y_pred):
+        a, _ = to_logmag(stft(y_true))
+        b, _ = to_logmag(stft(y_pred))
+        return 1.0 - keras.ops.mean(tf.image.ssim(a, b, max_val=max_val))
+    return apply
+
+
+LOSS_BUILDERS = {
+    'l1': lambda fl, fs: log_l1_loss(fl, fs),
+    'l2': lambda fl, fs: log_l2_loss(fl, fs),
+    'multi_scale': lambda fl, fs: multi_scale_spectral_loss(),
+    'ssim': lambda fl, fs: ssim_loss(fl, fs),
+}
 
 # ---------------------------------------------------------------------------
 # Dataset (reads X/Y wav pairs written by prepare.py)
@@ -175,11 +223,12 @@ class dataset(keras.utils.PyDataset):
 FRAME_LENGTH = 512
 FRAME_STEP = 128
 
-def checkpoint_path(ver):
-    return f'./checkpoints/dereverb-unet-{ver}.weights.h5'
+def checkpoint_path(ver, loss='l1'):
+    return f'./checkpoints/dereverb-unet-{loss}-{ver}.weights.h5'
 
 
-def train(ver='prd', epochs=200, batch_size=32, lr=1e-4, resume=False, seed=42):
+def train(ver='prd', epochs=200, batch_size=32, lr=1e-4, resume=False, seed=42,
+          loss='l1'):
     keras.utils.set_random_seed(seed)
     train_ds_dir = f'./datasets/dereverb/train-{ver}'
     val_ds_dir = f'./datasets/dereverb/val-{ver}'
@@ -189,15 +238,18 @@ def train(ver='prd', epochs=200, batch_size=32, lr=1e-4, resume=False, seed=42):
     train_ds = dataset(batch_size, train_paths)
     val_ds = dataset(batch_size, val_paths)
 
+    loss_fn = LOSS_BUILDERS[loss](FRAME_LENGTH, FRAME_STEP)
+    print(f'*** Loss: {loss} ***')
+
     model = dereverb_model((None,), FRAME_LENGTH, FRAME_STEP)
     model.summary()
     model.compile(
         optimizer=keras.optimizers.Adam(learning_rate=lr),
-        loss=log_l2_loss(FRAME_LENGTH, FRAME_STEP),
+        loss=loss_fn,
         jit_compile=False,
     )
 
-    ckpt = checkpoint_path(ver)
+    ckpt = checkpoint_path(ver, loss)
     os.makedirs(os.path.dirname(ckpt), exist_ok=True)
     if resume and os.path.exists(ckpt):
         print(f'*** Loaded model checkpoint "{ckpt}" ***')
@@ -223,8 +275,11 @@ if __name__ == '__main__':
     p.add_argument('--epochs', type=int, default=200)
     p.add_argument('--batch-size', type=int, default=32)
     p.add_argument('--lr', type=float, default=1e-4)
+    p.add_argument('--loss', choices=list(LOSS_BUILDERS), default='ssim',
+                   help='Loss function (default: ssim)')
     p.add_argument('--resume', action='store_true',
                    help='Resume from existing checkpoint instead of training from scratch')
     p.add_argument('--seed', type=int, default=42)
     args = p.parse_args()
-    train(args.ver, args.epochs, args.batch_size, args.lr, args.resume, args.seed)
+    train(args.ver, args.epochs, args.batch_size, args.lr, args.resume, args.seed,
+          loss=args.loss)

@@ -87,6 +87,8 @@ if __name__ == '__main__':
     p.add_argument('--batch-size', type=int, default=16)
     p.add_argument('--batch-idx', type=int, default=None,
                    help='Test batch index to render. Default: random.')
+    p.add_argument('--loss', default='l1',
+                   help='Loss name used in checkpoint filename (default: l1)')
     p.add_argument('--out-dir', default='./demo_dereverb')
     p.add_argument('--seed', type=int, default=42)
     args = p.parse_args()
@@ -97,7 +99,7 @@ if __name__ == '__main__':
     test_ds = dataset(args.batch_size, test_paths)
 
     model = dereverb_model((None,), FRAME_LENGTH, FRAME_STEP)
-    ckpt = checkpoint_path(args.ver)
+    ckpt = checkpoint_path(args.ver, args.loss)
     model_dict = {'unet': (model, ckpt)}
 
     test_models(model_dict, test_ds, args.num_examples, FRAME_LENGTH, FRAME_STEP, args.out_dir,
