@@ -65,28 +65,32 @@ def prepare_impulse_responses(ir_dir='./IR'):
     return fname
 
 
-def prepare_librispeech(ver):
+def prepare_librispeech(ver, dataset_dir='.'):
     if ver == 'dev':
-        download('https://www.openslr.org/resources/12/dev-clean.tar.gz', './SpeechDev')
-        return './SpeechDev/LibriSpeech/dev-clean'
-    download('https://www.openslr.org/resources/12/train-clean-100.tar.gz', './Speech')
-    return './Speech/LibriSpeech/train-clean-100'
+        path = os.path.join(dataset_dir, 'SpeechDev')
+        download('https://www.openslr.org/resources/12/dev-clean.tar.gz', path)
+        return os.path.join(path, 'LibriSpeech/dev-clean')
+    path = os.path.join(dataset_dir, 'Speech')
+    download('https://www.openslr.org/resources/12/train-clean-100.tar.gz', path)
+    return os.path.join(path, 'LibriSpeech/train-clean-100')
 
 
-def prepare_esc50(target_dir='./Noise'):
-    # The archive unpacks to ./ESC-50-master/, so we can't use download() directly
-    # (it would skip because './' always exists). Check for the extracted dir instead.
-    if not os.path.exists('./ESC-50-master'):
+def prepare_esc50(dataset_dir='.'):
+    target_dir = os.path.join(dataset_dir, 'Noise')
+    esc_master = os.path.join(dataset_dir, 'ESC-50-master')
+    # The archive unpacks to ESC-50-master/, so we can't use download() directly
+    # (it would skip because the parent dir always exists). Check for the extracted dir instead.
+    if not os.path.exists(esc_master):
         import wget
         url = 'https://github.com/karoldvl/ESC-50/archive/master.zip'
         print(f'downloading {url}')
         file = wget.download(url)
         print('\nextracting')
         with zipfile.ZipFile(file, 'r') as zf:
-            zf.extractall('./')
+            zf.extractall(dataset_dir)
         os.remove(file)
-    csv_file = './ESC-50-master/meta/esc50.csv'
-    source_dir = './ESC-50-master/audio'
+    csv_file = os.path.join(esc_master, 'meta/esc50.csv')
+    source_dir = os.path.join(esc_master, 'audio')
     classes = [
         'washing_machine', 'vacuum_cleaner', 'clock_alarm', 'helicopter', 'chainsaw',
         'siren', 'car_horn', 'engine', 'train', 'church_bells', 'airplane', 'crying_baby',
@@ -230,7 +234,8 @@ def eval_scores(model_dict, dataset, rate=16000):
 # Entry points
 # ---------------------------------------------------------------------------
 
-def prepare_all(ver='prd', overwrite=False, seed=42):
+def prepare_all(ver='prd', overwrite=False, seed=42,
+                out_dir='./datasets/dereverb', dataset_dir='.'):
     """Download all raw data and generate train/val/test wav pairs for `ver`."""
     random.seed(seed)
     np.random.seed(seed)
@@ -238,9 +243,9 @@ def prepare_all(ver='prd', overwrite=False, seed=42):
     timesteps_train = frame_step * 128
     timesteps_test = frame_step * 640
 
-    ir_pkl = prepare_impulse_responses()
-    speech_dir = prepare_librispeech(ver)
-    noise_dir = prepare_esc50()
+    ir_pkl = prepare_impulse_responses(os.path.join(dataset_dir, 'IR'))
+    speech_dir = prepare_librispeech(ver, dataset_dir)
+    noise_dir = prepare_esc50(dataset_dir)
 
     with open(ir_pkl, 'rb') as f:
         ir_list = pickle.load(f)
@@ -260,13 +265,13 @@ def prepare_all(ver='prd', overwrite=False, seed=42):
 
     print('Train dataset:')
     make_dataset(train_signals, train_noises, ir_list, timesteps_train, 1,
-                 out_dir=f'./datasets/dereverb/train-{ver}', **common)
+                 out_dir=f'{out_dir}/train-{ver}', **common)
     print('Validation dataset:')
     make_dataset(val_signals, val_noises, ir_list, timesteps_train, 1,
-                 out_dir=f'./datasets/dereverb/val-{ver}', **common)
+                 out_dir=f'{out_dir}/val-{ver}', **common)
     print('Test dataset:')
     make_dataset(val_signals, val_noises, ir_list, timesteps_test, 1,
-                 out_dir=f'./datasets/dereverb/test-{ver}', **common)
+                 out_dir=f'{out_dir}/test-{ver}', **common)
 
 
 if __name__ == '__main__':
@@ -274,5 +279,9 @@ if __name__ == '__main__':
     p.add_argument('--ver', choices=['dev', 'prd'], default='prd')
     p.add_argument('--overwrite', action='store_true')
     p.add_argument('--seed', type=int, default=42)
+    p.add_argument('--out-dir', default='./data',
+                   help='base output directory for generated wav pairs')
+    p.add_argument('--dataset-dir', default='.',
+                   help='base directory for downloaded raw data (IR, LibriSpeech, ESC-50)')
     args = p.parse_args()
-    prepare_all(args.ver, args.overwrite, args.seed)
+    prepare_all(args.ver, args.overwrite, args.seed, args.out_dir, args.dataset_dir)

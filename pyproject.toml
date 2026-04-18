@@ -9,11 +9,16 @@ dependencies = [
     "matplotlib>=3.10.8",
     "numpy>=2.2.6",
     "pesq>=0.0.4",
+    "pyqt6>=6.11.0",
     "pystoi>=0.4.1",
     "scipy>=1.15.3",
     "sounddevice>=0.5.5",
     "soundfile>=0.13.1",
+    "srmrpy",
     "tensorflow>=2.21.0",
     "tqdm>=4.67.3",
     "wget>=3.2",
 ]
+
+[tool.uv.sources]
+srmrpy = { git = "https://github.com/jfsantos/SRMRpy.git" }

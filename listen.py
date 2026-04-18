@@ -254,7 +254,7 @@ class Viewer:
 
 if __name__ == '__main__':
     p = argparse.ArgumentParser()
-    p.add_argument('--dir', default='./demo_dereverb',
+    p.add_argument('--dir', default='./demo',
                    help='Directory containing example_*/ subdirs written by test.py')
     args = p.parse_args()
     Viewer(find_examples(args.dir))

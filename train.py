@@ -1,7 +1,7 @@
 """U-Net speech dereverberation: custom Keras layers, model, loss, and training loop.
 
 Run this directly after prepare.py has generated the X/Y wav pairs under
-./datasets/dereverb/{train,val}-{ver}/.
+./data/{train,val}-{ver}/ (or whatever --data-dir points at).
 """
 import os
 import argparse
@@ -224,14 +224,14 @@ FRAME_LENGTH = 512
 FRAME_STEP = 128
 
 def checkpoint_path(ver, loss='l1'):
-    return f'./checkpoints/dereverb-unet-{loss}-{ver}.weights.h5'
+    return f'./checkpoints/unet-{loss}-{ver}.weights.h5'
 
 
 def train(ver='prd', epochs=200, batch_size=32, lr=1e-4, resume=False, seed=42,
-          loss='l1'):
+          loss='l1', data_dir='./data'):
     keras.utils.set_random_seed(seed)
-    train_ds_dir = f'./datasets/dereverb/train-{ver}'
-    val_ds_dir = f'./datasets/dereverb/val-{ver}'
+    train_ds_dir = f'{data_dir}/train-{ver}'
+    val_ds_dir = f'{data_dir}/val-{ver}'
     train_paths = tf.io.gfile.glob(train_ds_dir + '/X/*.wav')
     val_paths = tf.io.gfile.glob(val_ds_dir + '/X/*.wav')
 
@@ -275,11 +275,13 @@ if __name__ == '__main__':
     p.add_argument('--epochs', type=int, default=200)
     p.add_argument('--batch-size', type=int, default=32)
     p.add_argument('--lr', type=float, default=1e-4)
-    p.add_argument('--loss', choices=list(LOSS_BUILDERS), default='ssim',
-                   help='Loss function (default: ssim)')
+    p.add_argument('--loss', choices=list(LOSS_BUILDERS), default='l1',
+                   help='Loss function (default: l1)')
     p.add_argument('--resume', action='store_true',
                    help='Resume from existing checkpoint instead of training from scratch')
     p.add_argument('--seed', type=int, default=42)
+    p.add_argument('--data-dir', default='./data',
+                   help='base directory holding {train,val}-{ver}/ wav pairs (default: ./data)')
     args = p.parse_args()
     train(args.ver, args.epochs, args.batch_size, args.lr, args.resume, args.seed,
-          loss=args.loss)
+          loss=args.loss, data_dir=args.data_dir)

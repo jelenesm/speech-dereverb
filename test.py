@@ -7,7 +7,7 @@ import numpy as np
 import soundfile as sf
 import tensorflow as tf
 
-from train import FRAME_LENGTH, FRAME_STEP, checkpoint_path, dataset, dereverb_model
+from train import FRAME_LENGTH, FRAME_STEP, dataset, dereverb_model
 
 
 def make_overlapping_sequences(x, block_size, overlap):
@@ -87,20 +87,21 @@ if __name__ == '__main__':
     p.add_argument('--batch-size', type=int, default=16)
     p.add_argument('--batch-idx', type=int, default=None,
                    help='Test batch index to render. Default: random.')
-    p.add_argument('--loss', default='l1',
-                   help='Loss name used in checkpoint filename (default: l1)')
-    p.add_argument('--out-dir', default='./demo_dereverb')
+    p.add_argument('--ckpt', required=True,
+                   help='Path to the checkpoint (.weights.h5) to evaluate')
+    p.add_argument('--out-dir', default='./demo')
+    p.add_argument('--data-dir', default='./data',
+                   help='base directory holding {split}-{ver}/ wav pairs (default: ./data)')
     p.add_argument('--seed', type=int, default=42)
     args = p.parse_args()
 
     np.random.seed(args.seed)
 
-    test_paths = tf.io.gfile.glob(f'./datasets/dereverb/test-{args.ver}/X/*.wav')
+    test_paths = tf.io.gfile.glob(f'{args.data_dir}/test-{args.ver}/X/*.wav')
     test_ds = dataset(args.batch_size, test_paths)
 
     model = dereverb_model((None,), FRAME_LENGTH, FRAME_STEP)
-    ckpt = checkpoint_path(args.ver, args.loss)
-    model_dict = {'unet': (model, ckpt)}
+    model_dict = {'unet': (model, args.ckpt)}
 
     test_models(model_dict, test_ds, args.num_examples, FRAME_LENGTH, FRAME_STEP, args.out_dir,
                 batch_idx=args.batch_idx)

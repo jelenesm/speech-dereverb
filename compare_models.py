@@ -167,15 +167,16 @@ if __name__ == '__main__':
                    help='Batch index (default: random)')
     p.add_argument('--batch-size', type=int, default=16)
     p.add_argument('--seed', type=int, default=42)
+    p.add_argument('--data-dir', default='./data',
+                   help='base directory holding {split}-{ver}/ wav pairs (default: ./data)')
     args = p.parse_args()
 
     np.random.seed(args.seed)
 
-    paths = sorted(tf.io.gfile.glob(
-        f'./datasets/dereverb/{args.split}-{args.ver}/X/*.wav'))
+    split_dir = f'{args.data_dir}/{args.split}-{args.ver}'
+    paths = sorted(tf.io.gfile.glob(f'{split_dir}/X/*.wav'))
     if not paths:
-        raise SystemExit(
-            f'No wav pairs found under ./datasets/dereverb/{args.split}-{args.ver}/')
+        raise SystemExit(f'No wav pairs found under {split_dir}/')
 
     ds = dataset(args.batch_size, paths)
     batch_idx = (args.batch_idx if args.batch_idx is not None

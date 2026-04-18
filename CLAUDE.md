@@ -50,7 +50,7 @@ There is no build system and no test suite. The three scripts form a linear pipe
    - LibriSpeech `dev-clean` (`ver=dev`) or `train-clean-100` (`ver=prd`) → `./SpeechDev/` or `./Speech/`
    - ESC-50 environmental noise → `./Noise/<class>/`
    - Degraded/clean wav pairs → `./datasets/dereverb/{train,val,test}-{ver}/{X,Y}/`
-2. **`python train.py --ver {dev|prd}`** — builds the U-Net, compiles with `log_l2_loss`, fits. Checkpoint → `./checkpoints/dereverb-unet-{ver}.weights.h5`. Add `--resume` to continue from an existing checkpoint.
+2. **`python train.py --ver {dev|prd}`** — builds the U-Net, compiles with `log_l2_loss`, fits. Checkpoint → `./checkpoints/unet-{loss}-{ver}.weights.h5`. Add `--resume` to continue from an existing checkpoint.
 3. **`python test.py --ver {dev|prd}`** — renders example spectrograms + wavs under `./demo_dereverb/example_*/`.
 
 After training, `python eval.py --ver {dev|prd} --split {train|val|test}` reports mean loss and SI-SNR. `python listen.py` opens the interactive viewer over `./demo_dereverb/`.
