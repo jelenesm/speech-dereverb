@@ -13,9 +13,10 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.widgets import Button
 import soundfile as sf
-import tensorflow as tf
+import torch
 
-from train import FRAME_LENGTH, FRAME_STEP, dataset, dereverb_model
+from train import (FRAME_LENGTH, FRAME_STEP, DereverbModel, load_batch,
+                   select_device)
 from test import block_inference
 from listen import spectrogram_db, Player
 
@@ -25,15 +26,16 @@ SR = 16000
 
 
 def find_checkpoints(ckpt_dir):
-    paths = sorted(glob.glob(os.path.join(ckpt_dir, '*.weights.h5')))
+    paths = sorted(glob.glob(os.path.join(ckpt_dir, '*.pt')))
     return [(os.path.basename(p), p) for p in paths]
 
 
-def precompute(model, checkpoints, inputs):
+def precompute(model, checkpoints, inputs, device):
     predictions = {}
     for name, path in checkpoints:
         print(f'Checkpoint: {name}')
-        model.load_weights(path)
+        model.load_state_dict(torch.load(path, map_location=device))
+        model.eval()
         preds = []
         for x in inputs:
             y = block_inference(model, x, block_size=16384, overlap=128)
@@ -174,24 +176,25 @@ if __name__ == '__main__':
     np.random.seed(args.seed)
 
     split_dir = f'{args.data_dir}/{args.split}-{args.ver}'
-    paths = sorted(tf.io.gfile.glob(f'{split_dir}/X/*.wav'))
+    paths = sorted(glob.glob(f'{split_dir}/X/*.wav'))
     if not paths:
         raise SystemExit(f'No wav pairs found under {split_dir}/')
 
-    ds = dataset(args.batch_size, paths)
+    num_batches = len(paths) // args.batch_size
     batch_idx = (args.batch_idx if args.batch_idx is not None
-                 else np.random.randint(0, len(ds)))
+                 else int(np.random.randint(0, num_batches)))
     print(f'Batch {batch_idx} ({args.batch_size} examples)')
-    inputs, targets = ds[batch_idx]
+    inputs, targets = load_batch(paths, args.batch_size, batch_idx)
 
     checkpoints = find_checkpoints(args.ckpt_dir)
     if not checkpoints:
-        raise SystemExit(f'No *.weights.h5 files found in {args.ckpt_dir}/')
+        raise SystemExit(f'No *.pt files found in {args.ckpt_dir}/')
     print(f'Found {len(checkpoints)} checkpoint(s): '
           f'{[n for n, _ in checkpoints]}')
 
-    model = dereverb_model((None,), FRAME_LENGTH, FRAME_STEP)
-    predictions = precompute(model, checkpoints, inputs)
+    device = select_device()
+    model = DereverbModel(FRAME_LENGTH, FRAME_STEP).to(device)
+    predictions = precompute(model, checkpoints, inputs, device)
 
     Comparer(list(inputs), list(targets), checkpoints, predictions)
     plt.show()

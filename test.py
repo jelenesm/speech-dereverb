@@ -1,13 +1,15 @@
 """Render example inputs/predictions (wavs only) from a trained model."""
 import argparse
+import glob
 import os
 import time
 
 import numpy as np
 import soundfile as sf
-import tensorflow as tf
+import torch
 
-from train import FRAME_LENGTH, FRAME_STEP, dataset, dereverb_model
+from train import (FRAME_LENGTH, FRAME_STEP, DereverbModel, load_batch,
+                   select_device)
 
 
 def make_overlapping_sequences(x, block_size, overlap):
@@ -45,25 +47,22 @@ def mix_overlapping_sequences(sequences, overlap):
 def block_inference(model, x, block_size, overlap):
     start = time.time()
     inputs = make_overlapping_sequences(x, block_size, overlap)
-    preds = model(inputs)
+    device = next(model.parameters()).device
+    inputs_t = torch.from_numpy(inputs).float().to(device)
+    with torch.no_grad():
+        preds = model(inputs_t).cpu().numpy()
     y = mix_overlapping_sequences(preds, overlap)
     print(f'inference time: {time.time() - start:.3f}s')
     return y
 
 
-def test_models(model_dict, dataset, num_examples, frame_length, frame_step, out_dir,
-                batch_idx=None):
-    """Write input/target/prediction wavs for a test batch across models.
-
-    If `batch_idx` is None, a random batch is picked."""
+def test_models(model_dict, inputs, targets, num_examples, out_dir, batch_idx, device):
+    """Write input/target/prediction wavs for a given batch across models."""
     def save(x, path):
         sf.write(path + '.wav', x, samplerate=16000)
 
     os.makedirs(out_dir, exist_ok=True)
-    if batch_idx is None:
-        batch_idx = np.random.randint(0, len(dataset))
     print(f'batch index: {batch_idx}')
-    inputs, targets = dataset[batch_idx]
 
     example_dirs = []
     for k in range(num_examples):
@@ -74,8 +73,11 @@ def test_models(model_dict, dataset, num_examples, frame_length, frame_step, out
         save(targets[k], os.path.join(d, 'target'))
 
     for model_name, (model, checkpoint) in model_dict.items():
-        model.load_weights(checkpoint)
-        preds = [block_inference(model, inp, block_size=16384, overlap=128) for inp in inputs]
+        model.to(device)
+        model.load_state_dict(torch.load(checkpoint, map_location=device))
+        model.eval()
+        preds = [block_inference(model, inp, block_size=16384, overlap=128)
+                 for inp in inputs]
         for k, d in enumerate(example_dirs):
             save(preds[k], os.path.join(d, model_name))
 
@@ -88,7 +90,7 @@ if __name__ == '__main__':
     p.add_argument('--batch-idx', type=int, default=None,
                    help='Test batch index to render. Default: random.')
     p.add_argument('--ckpt', required=True,
-                   help='Path to the checkpoint (.weights.h5) to evaluate')
+                   help='Path to the checkpoint (.pt) to evaluate')
     p.add_argument('--out-dir', default='./demo')
     p.add_argument('--data-dir', default='./data',
                    help='base directory holding {split}-{ver}/ wav pairs (default: ./data)')
@@ -97,11 +99,18 @@ if __name__ == '__main__':
 
     np.random.seed(args.seed)
 
-    test_paths = tf.io.gfile.glob(f'{args.data_dir}/test-{args.ver}/X/*.wav')
-    test_ds = dataset(args.batch_size, test_paths)
+    test_paths = sorted(glob.glob(f'{args.data_dir}/test-{args.ver}/X/*.wav'))
+    if not test_paths:
+        raise SystemExit(f'No test wav pairs under {args.data_dir}/test-{args.ver}/X/')
 
-    model = dereverb_model((None,), FRAME_LENGTH, FRAME_STEP)
+    num_batches = len(test_paths) // args.batch_size
+    batch_idx = (args.batch_idx if args.batch_idx is not None
+                 else int(np.random.randint(0, num_batches)))
+    inputs, targets = load_batch(test_paths, args.batch_size, batch_idx)
+
+    device = select_device()
+    model = DereverbModel(FRAME_LENGTH, FRAME_STEP)
     model_dict = {'unet': (model, args.ckpt)}
 
-    test_models(model_dict, test_ds, args.num_examples, FRAME_LENGTH, FRAME_STEP, args.out_dir,
-                batch_idx=args.batch_idx)
+    test_models(model_dict, inputs, targets, args.num_examples, args.out_dir,
+                batch_idx, device)

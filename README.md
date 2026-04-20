@@ -1,6 +1,6 @@
 # speech-dereverb
 
-U-Net speech dereverberation in Keras / TensorFlow. A 7-down/7-up convolutional U-Net operates on the log-magnitude STFT of 16 kHz speech to remove room reverb (and optionally clipping and additive noise). The STFT / ISTFT are custom Keras layers, so the model maps raw audio to raw audio end-to-end.
+U-Net speech dereverberation in PyTorch. A 7-down/7-up convolutional U-Net operates on the log-magnitude STFT of 16 kHz speech to remove room reverb (and optionally clipping and additive noise). The STFT / ISTFT are custom `nn.Module`s, so the model maps raw audio to raw audio end-to-end.
 
 ```
 waveform -> STFT -> log-polar -> U-Net on log-magnitude -> recombine w/ phase -> ISTFT -> waveform
@@ -32,20 +32,20 @@ The three scripts form a linear pipeline. `--ver prd` uses the full `train-clean
    ```sh
    python prepare.py --ver prd
    ```
-2. **Train** — fits the U-Net and writes the best checkpoint to `./checkpoints/unet-{loss}-{ver}.weights.h5`. Select a loss with `--loss {l1,l2,multi_scale,ssim}` (default `ssim`). Training uses `ReduceLROnPlateau` and `EarlyStopping`; pass `--resume` to continue from an existing checkpoint.
+2. **Train** — fits the U-Net and writes the best checkpoint to `./checkpoints/unet-{loss}-{ver}.pt`. Select a loss with `--loss {l1,l2,multi_scale,ssim}` (default `l1`). Training uses `ReduceLROnPlateau` with a manual early-stopping counter; pass `--resume` to continue from an existing checkpoint.
    ```sh
    python train.py --ver prd --loss l1
    ```
 3. **Render examples** — picks a random test batch and writes input / target / prediction wavs under `./demo/example_*/`:
    ```sh
-   python test.py --ver prd --ckpt ./checkpoints/unet-l1-prd.weights.h5
+   python test.py --ver prd --ckpt ./checkpoints/unet-l1-prd.pt
    ```
 
 After training, three extra tools are available:
 
-- **`python eval.py --ver prd --split test --ckpt-dir ./checkpoints/unet-l1-prd.weights.h5`** — reports SRMR, PESQ, and STOI (input, output, gain) over a split.
+- **`python eval.py --ver prd --split test --ckpt ./checkpoints/unet-l1-prd.pt`** — reports SRMR, PESQ, and STOI (input, output, gain) over a split.
 - **`python listen.py`** — interactive matplotlib viewer over `./demo/`: toggles between input / output / target spectrograms and plays the wavs. On WSL, playback goes through `powershell.exe`'s `Media.SoundPlayer` so no Linux audio stack is needed.
-- **`python compare_models.py --ver prd`** — side-by-side comparison of all checkpoints in `./checkpoints/`. Pre-computes predictions for a test batch, then lets you browse examples and cycle through checkpoints with inline spectrogram display and audio playback.
+- **`python compare_models.py --ver prd --ckpt-dir ./checkpoints`** — side-by-side comparison of all `*.pt` checkpoints in a directory. Pre-computes predictions for a test batch, then lets you browse examples and cycle through checkpoints with inline spectrogram display and audio playback.
 
 All four scripts above accept `--data-dir` (default `./data`) to point at an alternative dataset layout.
 
@@ -53,7 +53,7 @@ All four scripts above accept `--data-dir` (default `./data`) to point at an alt
 
 | File | Role |
 | --- | --- |
-| [train.py](train.py) | Custom STFT / ISTFT layers, U-Net builder, loss functions (L1, L2, multi-scale, SSIM), `PyDataset`, training loop |
+| [train.py](train.py) | STFT / ISTFT modules, U-Net, loss classes (L1, L2, multi-scale, SSIM), `Dataset`, training loop |
 | [prepare.py](prepare.py) | Downloads, resampling, and offline reverb / clipping / noise degradation |
 | [test.py](test.py) | Overlap-add block inference and demo wav rendering |
 | [eval.py](eval.py) | SRMR, PESQ, and STOI metrics on a split |
@@ -61,7 +61,7 @@ All four scripts above accept `--data-dir` (default `./data`) to point at an alt
 | [compare_models.py](compare_models.py) | Side-by-side checkpoint comparison with spectrogram display and audio playback |
 | [analyze.ipynb](analyze.ipynb) | Ad-hoc exploration notebook |
 
-Sample rate is hard-coded to **16 kHz** throughout. The STFT layer drops the DC bin so the frequency dimension is a power of two (required by the 7-level U-Net). See [CLAUDE.md](CLAUDE.md) for architectural details and gotchas.
+Sample rate is hard-coded to **16 kHz** throughout. The STFT module drops the DC bin so the frequency dimension is a power of two (required by the 7-level U-Net). See [CLAUDE.md](CLAUDE.md) for architectural details and gotchas.
 
 ## Data sources
 

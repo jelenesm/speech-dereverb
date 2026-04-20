@@ -6,6 +6,7 @@ under ./datasets/dereverb/{train,val,test}-{ver}/{X,Y}/ for training.
 """
 import argparse
 import csv
+import glob
 import os
 import pickle
 import random
@@ -13,12 +14,10 @@ import tarfile
 import time
 import zipfile
 
-import keras
 import librosa
 import numpy as np
 import scipy
 import soundfile as sf
-import tensorflow as tf
 from matplotlib import pyplot as plt
 from tqdm import tqdm
 
@@ -54,7 +53,7 @@ def prepare_impulse_responses(ir_dir='./IR'):
     if os.path.exists(fname):
         return fname
     responses = []
-    for path in tf.io.gfile.glob(ir_dir + '/Audio/*.wav'):
+    for path in sorted(glob.glob(ir_dir + '/Audio/*.wav')):
         ir, sr = sf.read(path)
         if sr != TARGET_SR:
             ir = librosa.resample(ir, orig_sr=sr, target_sr=TARGET_SR)
@@ -198,13 +197,19 @@ def make_dataset(
 # Evaluation
 # ---------------------------------------------------------------------------
 
-def eval_scores(model_dict, dataset, rate=16000):
-    """Evaluate audio quality metrics across models. PESQ/STOI requires pysepm."""
+def eval_scores(model_dict, batches, rate=16000):
+    """Evaluate audio quality metrics across models. PESQ/STOI requires pysepm.
+
+    `batches` is an iterable of (inputs, targets) numpy pairs. For full
+    PESQ/STOI/SRMR metrics on a split, prefer `eval.py`.
+    """
     try:
         import pysepm
     except ImportError:
         pysepm = None
         print('pysepm not available — PESQ/STOI will be skipped')
+
+    import torch
 
     plt.figure(figsize=(10, 6))
     plt.subplot(121); plt.title('PESQ')
@@ -212,15 +217,18 @@ def eval_scores(model_dict, dataset, rate=16000):
 
     scores = {}
     for model_name, (model, checkpoint) in model_dict.items():
-        model.load_weights(checkpoint)
+        device = next(model.parameters()).device
+        model.load_state_dict(torch.load(checkpoint, map_location=device))
+        model.eval()
         pesq, stoi = [], []
-        for idx in range(len(dataset)):
-            inputs, targets = dataset[idx]
-            preds = model(inputs)
+        for inputs, targets in batches:
+            x = torch.from_numpy(inputs).float().to(device)
+            with torch.no_grad():
+                preds = model(x).cpu().numpy()
             if pysepm is not None:
                 for k in range(len(targets)):
-                    pesq.append(pysepm.pesq(targets[k], np.asarray(preds[k]), rate))
-                    stoi.append(pysepm.stoi(targets[k], np.asarray(preds[k]), rate))
+                    pesq.append(pysepm.pesq(targets[k], preds[k], rate))
+                    stoi.append(pysepm.stoi(targets[k], preds[k], rate))
         scores[model_name] = {'pesq': float(np.mean(pesq)) if pesq else None,
                               'stoi': float(np.mean(stoi)) if stoi else None}
         plt.subplot(121); plt.plot(pesq, label=model_name)
@@ -250,8 +258,8 @@ def prepare_all(ver='prd', overwrite=False, seed=42,
     with open(ir_pkl, 'rb') as f:
         ir_list = pickle.load(f)
 
-    signal_paths = tf.io.gfile.glob(speech_dir + '/*/*/*.flac')
-    noise_paths = tf.io.gfile.glob(noise_dir + '/*/*.wav')
+    signal_paths = sorted(glob.glob(speech_dir + '/*/*/*.flac'))
+    noise_paths = sorted(glob.glob(noise_dir + '/*/*.wav'))
     print(f'Found {len(signal_paths)} speech examples and {len(noise_paths)} noise examples')
 
     train_signals, val_signals = split_dataset(signal_paths)
