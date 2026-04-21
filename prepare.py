@@ -54,7 +54,7 @@ def prepare_impulse_responses(ir_dir='./IR'):
     if os.path.exists(fname):
         return fname
     responses = []
-    for path in tf.io.gfile.glob(ir_dir + '/Audio/*.wav'):
+    for path in sorted(tf.io.gfile.glob(ir_dir + '/Audio/*.wav')):
         ir, sr = sf.read(path)
         if sr != TARGET_SR:
             ir = librosa.resample(ir, orig_sr=sr, target_sr=TARGET_SR)
@@ -250,8 +250,8 @@ def prepare_all(ver='prd', overwrite=False, seed=42,
     with open(ir_pkl, 'rb') as f:
         ir_list = pickle.load(f)
 
-    signal_paths = tf.io.gfile.glob(speech_dir + '/*/*/*.flac')
-    noise_paths = tf.io.gfile.glob(noise_dir + '/*/*.wav')
+    signal_paths = sorted(tf.io.gfile.glob(speech_dir + '/*/*/*.flac'))
+    noise_paths = sorted(tf.io.gfile.glob(noise_dir + '/*/*.wav'))
     print(f'Found {len(signal_paths)} speech examples and {len(noise_paths)} noise examples')
 
     train_signals, val_signals = split_dataset(signal_paths)
