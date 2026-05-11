@@ -7,13 +7,69 @@ import argparse
 import glob
 import os
 import random
+import time
 
 import numpy as np
 import soundfile as sf
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from pystoi import stoi as stoi_score
 from torch.utils.data import DataLoader, Dataset
+
+
+def si_sdr(target, est, eps=1e-8):
+    """Scale-invariant SDR in dB for a single 1D signal pair."""
+    target = target - target.mean()
+    est = est - est.mean()
+    alpha = np.dot(est, target) / (np.dot(target, target) + eps)
+    proj = alpha * target
+    noise = est - proj
+    return 10.0 * np.log10(np.sum(proj ** 2) / (np.sum(noise ** 2) + eps) + eps)
+
+
+class ValMetrics:
+    """Pre-loads val wavs and computes ESTOI gain + SI-SDR-i each epoch.
+
+    Mirrors the Keras-side MetricsOnVal callback. Holds the val set in memory
+    so the per-epoch forward pass is independent of the training DataLoader.
+    """
+    def __init__(self, val_paths, batch_size=16, sr=16000):
+        xs, ys = [], []
+        for x_path in val_paths:
+            basename = os.path.basename(x_path)
+            y_path = os.path.join(os.path.dirname(os.path.dirname(x_path)), 'Y', basename)
+            xi, _ = sf.read(x_path)
+            yi, _ = sf.read(y_path)
+            xs.append(xi)
+            ys.append(yi)
+        self.x = np.array(xs)
+        self.y = np.array(ys)
+        self.batch_size = batch_size
+        self.sr = sr
+        self.sisdr_in = float(np.mean([si_sdr(yi, xi) for xi, yi in zip(self.x, self.y)]))
+        self.estoi_in = float(np.mean([stoi_score(yi, xi, sr, extended=True)
+                                       for xi, yi in zip(self.x, self.y)]))
+
+    def compute(self, model, device):
+        was_training = model.training
+        model.eval()
+        preds = []
+        with torch.no_grad():
+            for i in range(0, len(self.x), self.batch_size):
+                xb = torch.from_numpy(self.x[i:i + self.batch_size]).float().to(device)
+                preds.append(model(xb).cpu().numpy())
+        if was_training:
+            model.train()
+        pred_np = np.concatenate(preds, axis=0)
+        sisdr_out = float(np.mean([si_sdr(yi, pi) for pi, yi in zip(self.y, pred_np)]))
+        estoi_out = float(np.mean([stoi_score(yi, pi, self.sr, extended=True)
+                                   for pi, yi in zip(pred_np, self.y)]))
+        sisdr_i = sisdr_out - self.sisdr_in
+        estoi_gain = estoi_out - self.estoi_in
+        print(f'  estoi_gain: {estoi_gain:+.4f} (out {estoi_out:.4f}, in {self.estoi_in:.4f})'
+              f'  sisdr_i: {sisdr_i:+.3f} dB')
+        return {'estoi_gain': estoi_gain, 'sisdr_i': sisdr_i}
 
 
 # ---------------------------------------------------------------------------
@@ -367,7 +423,7 @@ def count_parameters(module):
 
 
 def train(ver='prd', epochs=200, batch_size=32, lr=1e-4, resume=False, seed=42,
-          loss='l1', data_dir='./data', num_workers=4):
+          loss='l1', data_dir='./data', num_workers=4, time_budget=None):
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
@@ -410,9 +466,13 @@ def train(ver='prd', epochs=200, batch_size=32, lr=1e-4, resume=False, seed=42,
     else:
         print('*** Training from scratch ***')
 
+    val_metrics = ValMetrics(val_paths)
+
     best_val = float('inf')
     patience_counter = 0
     early_stop_patience = 10
+    t0 = time.time()
+    should_stop = False
 
     for epoch in range(1, epochs + 1):
         model.train()
@@ -426,6 +486,9 @@ def train(ver='prd', epochs=200, batch_size=32, lr=1e-4, resume=False, seed=42,
             loss_val.backward()
             optimizer.step()
             train_losses.append(loss_val.item())
+            if time_budget and (time.time() - t0) >= time_budget:
+                should_stop = True
+                break
 
         model.eval()
         val_losses = []
@@ -439,6 +502,7 @@ def train(ver='prd', epochs=200, batch_size=32, lr=1e-4, resume=False, seed=42,
         lr_now = optimizer.param_groups[0]['lr']
         print(f'Epoch {epoch}: train_loss={train_loss:.4f}  '
               f'val_loss={val_loss:.4f}  lr={lr_now:.2e}')
+        val_metrics.compute(model, device)
 
         scheduler.step(val_loss)
 
@@ -453,7 +517,14 @@ def train(ver='prd', epochs=200, batch_size=32, lr=1e-4, resume=False, seed=42,
                 print(f'*** Early stopping at epoch {epoch} ***')
                 break
 
-    return model
+        if should_stop:
+            print(f'*** TimeBudget reached after epoch {epoch}, stopping ***')
+            break
+
+    # Fallback if no checkpoint was ever written (e.g. budget ran out before val).
+    if not os.path.exists(ckpt):
+        torch.save(model.state_dict(), ckpt)
+    return model, ckpt
 
 
 if __name__ == '__main__':
@@ -470,6 +541,12 @@ if __name__ == '__main__':
     p.add_argument('--data-dir', default='./data',
                    help='base directory holding {train,val}-{ver}/ wav pairs (default: ./data)')
     p.add_argument('--num-workers', type=int, default=4)
+    p.add_argument('--time-budget', type=int, default=None,
+                   help='wall-clock training cap in seconds (default: disabled)')
     args = p.parse_args()
-    train(args.ver, args.epochs, args.batch_size, args.lr, args.resume, args.seed,
-          loss=args.loss, data_dir=args.data_dir, num_workers=args.num_workers)
+    _, ckpt = train(args.ver, args.epochs, args.batch_size, args.lr, args.resume, args.seed,
+                    loss=args.loss, data_dir=args.data_dir, num_workers=args.num_workers,
+                    time_budget=args.time_budget)
+
+    from eval import evaluate
+    evaluate(ckpt, ver=args.ver, split='test', batch_size=16, data_dir=args.data_dir)
