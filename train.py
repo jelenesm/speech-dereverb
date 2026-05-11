@@ -5,12 +5,76 @@ Run this directly after prepare.py has generated the X/Y wav pairs under
 """
 import os
 import argparse
+import time
 
 import keras
 import numpy as np
 import soundfile as sf
 import tensorflow as tf
 from keras import layers
+from pystoi import stoi as stoi_score
+
+
+class TimeBudget(keras.callbacks.Callback):
+    """Stop training once wall-clock fit time exceeds `seconds`."""
+    def __init__(self, seconds):
+        super().__init__()
+        self.seconds = seconds
+
+    def on_train_begin(self, logs=None):
+        self._t0 = time.time()
+
+    def on_train_batch_end(self, batch, logs=None):
+        if time.time() - self._t0 >= self.seconds:
+            self.model.stop_training = True
+
+
+def si_sdr(target, est, eps=1e-8):
+    """Scale-invariant SDR in dB for a single 1D signal pair."""
+    target = target - target.mean()
+    est = est - est.mean()
+    alpha = np.dot(est, target) / (np.dot(target, target) + eps)
+    proj = alpha * target
+    noise = est - proj
+    return 10.0 * np.log10(np.sum(proj ** 2) / (np.sum(noise ** 2) + eps) + eps)
+
+
+class MetricsOnVal(keras.callbacks.Callback):
+    """Compute ESTOI gain and SI-SDR-i on the full val set each epoch and inject into logs."""
+    def __init__(self, val_paths, batch_size=16, sr=16000):
+        super().__init__()
+        xs, ys = [], []
+        for x_path in val_paths:
+            basename = os.path.basename(x_path)
+            y_path = os.path.join(os.path.dirname(os.path.dirname(x_path)), 'Y', basename)
+            xi, _ = sf.read(x_path)
+            yi, _ = sf.read(y_path)
+            xs.append(xi)
+            ys.append(yi)
+        self.x = np.array(xs)
+        self.y = np.array(ys)
+        self.sr = sr
+        self.batch_size = batch_size
+        self.sisdr_in = float(np.mean([si_sdr(yi, xi) for xi, yi in zip(self.x, self.y)]))
+        self.estoi_in = float(np.mean([stoi_score(yi, xi, sr, extended=True)
+                                       for xi, yi in zip(self.x, self.y)]))
+
+    def on_epoch_end(self, epoch, logs=None):
+        preds = []
+        for i in range(0, len(self.x), self.batch_size):
+            p = self.model(self.x[i:i + self.batch_size], training=False)
+            preds.append(keras.ops.convert_to_numpy(p))
+        pred_np = np.concatenate(preds, axis=0)
+        sisdr_out = float(np.mean([si_sdr(yi, pi) for pi, yi in zip(self.y, pred_np)]))
+        estoi_out = float(np.mean([stoi_score(yi, pi, self.sr, extended=True)
+                                   for pi, yi in zip(pred_np, self.y)]))
+        sisdr_i = sisdr_out - self.sisdr_in
+        estoi_gain = estoi_out - self.estoi_in
+        logs = logs if logs is not None else {}
+        logs['estoi_gain'] = estoi_gain
+        logs['sisdr_i'] = sisdr_i
+        print(f' - estoi_gain: {estoi_gain:+.4f} (out {estoi_out:.4f}, in {self.estoi_in:.4f})'
+              f' - sisdr_i: {sisdr_i:+.3f} dB')
 
 
 # ---------------------------------------------------------------------------
@@ -228,7 +292,7 @@ def checkpoint_path(ver, loss='l1'):
 
 
 def train(ver='prd', epochs=200, batch_size=32, lr=1e-4, resume=False, seed=42,
-          loss='l1', data_dir='./data'):
+          loss='l1', data_dir='./data', time_budget=None):
     keras.utils.set_random_seed(seed)
     train_ds_dir = f'{data_dir}/train-{ver}'
     val_ds_dir = f'{data_dir}/val-{ver}'
@@ -257,16 +321,21 @@ def train(ver='prd', epochs=200, batch_size=32, lr=1e-4, resume=False, seed=42,
     else:
         print('*** Training from scratch ***')
 
-    model.fit(
-        x=train_ds, epochs=epochs, validation_data=val_ds,
-        callbacks=[
-            keras.callbacks.ModelCheckpoint(filepath=ckpt, save_weights_only=True,
-                                            monitor='val_loss', mode='min', save_best_only=True),
-            keras.callbacks.ReduceLROnPlateau(monitor='val_loss', factor=0.5, patience=5),
-            keras.callbacks.EarlyStopping(monitor='val_loss', patience=10),
-        ],
-    )
-    return model
+    callbacks = [
+        MetricsOnVal(val_paths),
+        keras.callbacks.ModelCheckpoint(filepath=ckpt, save_weights_only=True,
+                                        monitor='val_loss', mode='min', save_best_only=True),
+        keras.callbacks.ReduceLROnPlateau(monitor='val_loss', factor=0.5, patience=5),
+        keras.callbacks.EarlyStopping(monitor='val_loss', patience=10),
+    ]
+    if time_budget:
+        callbacks.append(TimeBudget(time_budget))
+
+    model.fit(x=train_ds, epochs=epochs, validation_data=val_ds, callbacks=callbacks)
+    # Fallback if the budget ran out before any checkpoint was written.
+    if not os.path.exists(ckpt):
+        model.save_weights(ckpt)
+    return model, ckpt
 
 
 if __name__ == '__main__':
@@ -282,6 +351,11 @@ if __name__ == '__main__':
     p.add_argument('--seed', type=int, default=42)
     p.add_argument('--data-dir', default='./data',
                    help='base directory holding {train,val}-{ver}/ wav pairs (default: ./data)')
+    p.add_argument('--time-budget', type=int, default=None,
+                   help='wall-clock training cap in seconds (default: disabled)')
     args = p.parse_args()
-    train(args.ver, args.epochs, args.batch_size, args.lr, args.resume, args.seed,
-          loss=args.loss, data_dir=args.data_dir)
+    _, ckpt = train(args.ver, args.epochs, args.batch_size, args.lr, args.resume, args.seed,
+                    loss=args.loss, data_dir=args.data_dir, time_budget=args.time_budget)
+
+    from eval import evaluate
+    evaluate(ckpt, ver=args.ver, split='test', batch_size=16, data_dir=args.data_dir)
